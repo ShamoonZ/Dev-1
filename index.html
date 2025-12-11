@@ -39,9 +39,24 @@
 
         /* Keep accessible names but hide visually */
         .visually-hidden { position: absolute !important; height: 1px; width: 1px; overflow: hidden; clip: rect(1px, 1px, 1px, 1px); white-space: nowrap; }
+
+        #loadingScreen {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #fff; z-index: 9999;
+            display: flex; align-items: center; justify-content: center;
+        }
+        #loadingScreen.hidden { display: none; }
+        .loader {
+            width: 50px; height: 50px; border: 5px solid #e0e0e0; border-top: 5px solid #2196F3;
+            border-radius: 50%; animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
+    <div id="loadingScreen">
+        <div class="loader"></div>
+    </div>
+
     <div class="video-container">
         <!-- mainVideo shows the current visible frame. bufferVideo preloads the next clip underneath. -->
         <video id="mainVideo" class="video-layer" muted playsinline preload="auto" webkit-playsinline></video>
@@ -123,8 +138,17 @@
             bufferEl.src = videos[videoType];
             bufferEl.load();
 
+            // Safety: if canplay doesn't fire within X ms, give up and keep main frame
+            const timeout = setTimeout(() => {
+                bufferEl.removeEventListener('canplay', onCanPlay);
+                bufferEl.removeEventListener('error', onError);
+                console.warn('Buffer load timeout — keeping current frame');
+                loading = false;
+            }, 8000);
+
             // If buffer is already the same src and ready, skip waiting
             const onCanPlay = function () {
+                clearTimeout(timeout);
                 bufferEl.removeEventListener('canplay', onCanPlay);
                 bufferEl.removeEventListener('error', onError);
 
@@ -169,6 +193,7 @@
             };
 
             const onError = function (e) {
+                clearTimeout(timeout);
                 bufferEl.removeEventListener('canplay', onCanPlay);
                 bufferEl.removeEventListener('error', onError);
                 console.error('Error loading buffer video', e);
@@ -178,20 +203,11 @@
 
             bufferEl.addEventListener('canplay', onCanPlay);
             bufferEl.addEventListener('error', onError);
-
-            // Safety: if canplay doesn't fire within X ms, give up and keep main frame
-            const timeout = setTimeout(() => {
-                bufferEl.removeEventListener('canplay', onCanPlay);
-                bufferEl.removeEventListener('error', onError);
-                console.warn('Buffer load timeout — keeping current frame');
-                loading = false;
-                clearTimeout(timeout);
-            }, 8000);
         }
 
         // Freeze visible video on ended
-        function onEndedHandler() {
-            freezeAtLastFrame(mainEl);
+        function onEndedHandler(e) {
+            freezeAtLastFrame(e.target);
         }
 
         mainEl.addEventListener('ended', onEndedHandler);
@@ -235,7 +251,12 @@
         }
 
         // Initial adjust
-        function adjustVideoSize() { mainEl.style.width = bufferEl.style.width = '100vw'; mainEl.style.height = bufferEl.style.height = '100vh'; }
+        function adjustVideoSize() {
+            const main = document.getElementById('mainVideo');
+            const buffer = document.getElementById('bufferVideo');
+            main.style.width = buffer.style.width = '100vw';
+            main.style.height = buffer.style.height = '100vh';
+        }
         window.addEventListener('orientationchange', () => setTimeout(adjustVideoSize, 100));
         window.addEventListener('resize', adjustVideoSize);
         window.addEventListener('load', () => { adjustVideoSize(); setTimeout(adjustVideoSize, 500); });
@@ -244,6 +265,31 @@
         // Start with a default video (optional) to have a frame visible — you can remove or change this
         // If you want nothing initially, comment the next line.
         // playVideoSmooth('smile');
+
+        // Preload all videos before hiding loading screen
+        (function preloadVideos() {
+            const loadingScreen = document.getElementById('loadingScreen');
+            const videoSources = Object.values(videos);
+            let loadedCount = 0;
+
+            function checkAllLoaded() {
+                loadedCount++;
+                if (loadedCount === videoSources.length) {
+                    loadingScreen.classList.add('hidden');
+                }
+            }
+
+            videoSources.forEach(src => {
+                const video = document.createElement('video');
+                video.muted = true;
+                video.playsInline = true;
+                video.preload = 'auto';
+                video.src = src;
+                video.addEventListener('canplaythrough', checkAllLoaded);
+                video.addEventListener('error', checkAllLoaded);
+                video.load();
+            });
+        })();
     </script>
 </body>
 </html>
